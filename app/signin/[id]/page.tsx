@@ -1,5 +1,5 @@
 import Logo from '@/components/icons/Logo';
-import { createClient } from '@/utils/supabase/server';
+import { getUser } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import {
@@ -42,11 +42,17 @@ export default async function SignIn({
   }
 
   // Check if the user is already logged in and redirect to the account page if so
-  const supabase = createClient();
+  const cookieStore = cookies();
+  const token = cookieStore.get('access_token')?.value;
 
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  let user = null;
+  if (token) {
+    try {
+      user = await getUser(token);
+    } catch (error) {
+      // Token invalid or expired, continue as guest
+    }
+  }
 
   if (user && viewProp !== 'update_password') {
     return redirect('/');

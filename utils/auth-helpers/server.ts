@@ -277,30 +277,54 @@ export async function updateEmail(formData: FormData) {
     );
   }
 
-  const supabase = createClient();
+  // Get user from JWT token
+  const cookieStore = cookies();
+  const token = cookieStore.get('access_token')?.value;
 
-  const callbackUrl = getURL(
-    getStatusRedirect('/account', 'Success!', `Your email has been updated.`)
-  );
+  if (!token) {
+    return getErrorRedirect(
+      '/account',
+      'Authentication required.',
+      'Please sign in to update your email.'
+    );
+  }
 
-  const { error } = await supabase.auth.updateUser(
-    { email: newEmail },
-    {
-      emailRedirectTo: callbackUrl
+  try {
+    const { getUser } = await import('@/lib/auth');
+    const { query } = await import('@/lib/zerodb');
+
+    const user = await getUser(token);
+
+    // Check if email is already taken
+    const existing = await query(
+      'SELECT id FROM users WHERE email = $1 AND id != $2',
+      [newEmail, user.id]
+    );
+
+    if (existing.rows.length > 0) {
+      return getErrorRedirect(
+        '/account',
+        'Your email could not be updated.',
+        'This email address is already in use.'
+      );
     }
-  );
 
-  if (error) {
+    // Update email
+    await query(
+      'UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2',
+      [newEmail, user.id]
+    );
+
+    return getStatusRedirect(
+      '/account',
+      'Success!',
+      'Your email has been updated.'
+    );
+  } catch (error) {
     return getErrorRedirect(
       '/account',
       'Your email could not be updated.',
-      error.message
-    );
-  } else {
-    return getStatusRedirect(
-      '/account',
-      'Confirmation emails sent.',
-      `You will need to confirm the update by clicking the links sent to both the old and new email addresses.`
+      error instanceof Error ? error.message : 'An unknown error occurred.'
     );
   }
 }
@@ -309,28 +333,39 @@ export async function updateName(formData: FormData) {
   // Get form data
   const fullName = String(formData.get('fullName')).trim();
 
-  const supabase = createClient();
-  const { error, data } = await supabase.auth.updateUser({
-    data: { full_name: fullName }
-  });
+  // Get user from JWT token
+  const cookieStore = cookies();
+  const token = cookieStore.get('access_token')?.value;
 
-  if (error) {
+  if (!token) {
     return getErrorRedirect(
       '/account',
-      'Your name could not be updated.',
-      error.message
+      'Authentication required.',
+      'Please sign in to update your name.'
     );
-  } else if (data.user) {
+  }
+
+  try {
+    const { getUser } = await import('@/lib/auth');
+    const { query } = await import('@/lib/zerodb');
+
+    const user = await getUser(token);
+
+    await query(
+      'UPDATE users SET full_name = $1, updated_at = NOW() WHERE id = $2',
+      [fullName, user.id]
+    );
+
     return getStatusRedirect(
       '/account',
       'Success!',
       'Your name has been updated.'
     );
-  } else {
+  } catch (error) {
     return getErrorRedirect(
       '/account',
-      'Hmm... Something went wrong.',
-      'Your name could not be updated.'
+      'Your name could not be updated.',
+      error instanceof Error ? error.message : 'An unknown error occurred.'
     );
   }
 }
