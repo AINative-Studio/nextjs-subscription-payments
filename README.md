@@ -48,12 +48,35 @@ cd nextjs-subscription-payments
 npm install
 ```
 
-### 2. Set Up ZeroDB Project (5 minutes)
+### 2. Set Up ZeroDB Dedicated PostgreSQL (5 minutes)
 
+**⚠️ Important: Requires a paid ZeroDB account (free accounts don't include dedicated PostgreSQL)**
+
+#### Option A: Using the Dashboard (Recommended)
+1. Sign up at https://ainative.studio/dashboard
+2. Create a new project
+3. Navigate to **Database** → **Dedicated PostgreSQL**
+4. Click **"Provision Dedicated PostgreSQL Instance"**
+5. Wait ~2 minutes for provisioning to complete
+6. Copy your **ZERODB_CONNECTION_STRING** from the dashboard
+
+#### Option B: Using the API
 ```bash
-# Visit https://ainative.studio/dashboard
-# Create new project → Enable PostgreSQL
-# Copy your connection string
+# 1. Get your API key from https://ainative.studio/dashboard/api-keys
+export ZERODB_API_KEY="your-api-key-here"
+
+# 2. Provision a dedicated PostgreSQL instance
+curl -X POST https://api.ainative.studio/v1/database/postgres/provision \
+  -H "Authorization: Bearer $ZERODB_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "your-project-id",
+    "instance_name": "nextjs-subscriptions-db",
+    "region": "us-east-1"
+  }'
+
+# 3. Get connection string (returned in API response)
+# Format: postgresql://user:password@host.ainative.studio:5432/dbname
 ```
 
 ### 3. Configure Environment (2 minutes)
