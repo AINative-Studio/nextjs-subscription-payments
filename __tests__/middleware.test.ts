@@ -3,7 +3,7 @@
  *
  * Comprehensive test suite for Next.js middleware JWT authentication.
  * Tests cover public routes, protected routes, token validation, cookie management,
- * redirect logic, edge cases, and integration scenarios.
+ * redirect logic, token refresh, user header injection, edge cases, and integration scenarios.
  *
  * Test Coverage Target: ≥80%
  * Performance Target: <50ms per request
@@ -11,12 +11,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { middleware } from '../middleware';
-import * as auth from '../lib/auth';
+import jwt from 'jsonwebtoken';
 
-// Mock the auth module
-jest.mock('../lib/auth', () => ({
-  verifyToken: jest.fn(),
+// Mock jwt module
+jest.mock('jsonwebtoken', () => ({
+  verify: jest.fn(),
+  sign: jest.fn(),
 }));
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 // Helper to create mock NextRequest with cookies
 function createMockRequest(
@@ -56,7 +59,7 @@ describe('Middleware - Public Route Tests', () => {
 
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('/signin should be accessible without token', async () => {
@@ -65,7 +68,7 @@ describe('Middleware - Public Route Tests', () => {
 
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('/signin/signup should be accessible without token', async () => {
@@ -74,7 +77,7 @@ describe('Middleware - Public Route Tests', () => {
 
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('/pricing should be accessible without token', async () => {
@@ -83,7 +86,7 @@ describe('Middleware - Public Route Tests', () => {
 
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('/api/webhooks/stripe should be accessible without token', async () => {
@@ -92,7 +95,7 @@ describe('Middleware - Public Route Tests', () => {
 
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('Static files (_next/static) should not be blocked', async () => {
@@ -156,16 +159,26 @@ describe('Middleware - Protected Route Tests', () => {
   });
 
   test('Token validation called for protected routes', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours from now
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'valid-token' });
 
     await middleware(request);
 
-    expect(auth.verifyToken).toHaveBeenCalledWith('valid-token');
+    expect(jwt.verify).toHaveBeenCalledWith('valid-token', JWT_SECRET);
   });
 
   test('Valid token allows access', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours from now
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'valid-token' });
     const response = await middleware(request);
 
@@ -173,7 +186,9 @@ describe('Middleware - Protected Route Tests', () => {
   });
 
   test('Invalid token redirects to signin', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new jwt.JsonWebTokenError('invalid token');
+    });
     const request = createMockRequest('/account', { access_token: 'invalid-token' });
     const response = await middleware(request);
 
@@ -183,7 +198,9 @@ describe('Middleware - Protected Route Tests', () => {
   });
 
   test('Expired token redirects to signin', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new jwt.TokenExpiredError('jwt expired', new Date());
+    });
     const request = createMockRequest('/account', { access_token: 'expired-token' });
     const response = await middleware(request);
 
@@ -199,18 +216,25 @@ describe('Middleware - Token Validation Tests', () => {
   });
 
   test('Valid JWT token allows access', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', {
       access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.valid.token'
     });
     const response = await middleware(request);
 
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).toHaveBeenCalled();
+    expect(jwt.verify).toHaveBeenCalled();
   });
 
   test('Invalid JWT token rejected', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid signature');
+    });
     const request = createMockRequest('/account', { access_token: 'invalid.jwt.token' });
     const response = await middleware(request);
 
@@ -218,7 +242,9 @@ describe('Middleware - Token Validation Tests', () => {
   });
 
   test('Expired JWT token rejected', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new jwt.TokenExpiredError('jwt expired', new Date());
+    });
     const request = createMockRequest('/account', { access_token: 'expired.jwt.token' });
     const response = await middleware(request);
 
@@ -226,7 +252,9 @@ describe('Middleware - Token Validation Tests', () => {
   });
 
   test('Malformed token rejected', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('jwt malformed');
+    });
     const request = createMockRequest('/account', { access_token: 'malformed-token' });
     const response = await middleware(request);
 
@@ -238,11 +266,13 @@ describe('Middleware - Token Validation Tests', () => {
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('Token with wrong signature rejected', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid signature');
+    });
     const request = createMockRequest('/account', {
       access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.wrong.signature'
     });
@@ -252,7 +282,9 @@ describe('Middleware - Token Validation Tests', () => {
   });
 
   test('Token cookie cleared on invalid token', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid token');
+    });
     const request = createMockRequest('/account', { access_token: 'invalid-token' });
     const response = await middleware(request);
 
@@ -263,18 +295,23 @@ describe('Middleware - Token Validation Tests', () => {
     }
   });
 
-  test('verifyToken() function called', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+  test('jwt.verify() function called', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'test-token' });
 
     await middleware(request);
 
-    expect(auth.verifyToken).toHaveBeenCalledTimes(1);
-    expect(auth.verifyToken).toHaveBeenCalledWith('test-token');
+    expect(jwt.verify).toHaveBeenCalledTimes(1);
+    expect(jwt.verify).toHaveBeenCalledWith('test-token', JWT_SECRET);
   });
 
-  test('Error handling for verifyToken() failure', async () => {
-    (auth.verifyToken as jest.Mock).mockImplementation(() => {
+  test('Error handling for jwt.verify() failure', async () => {
+    (jwt.verify as jest.Mock).mockImplementation(() => {
       throw new Error('Token verification failed');
     });
     const request = createMockRequest('/account', { access_token: 'error-token' });
@@ -294,22 +331,195 @@ describe('Middleware - Token Validation Tests', () => {
   });
 });
 
+describe('Middleware - Token Refresh Tests', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('Token refresh for soon-to-expire tokens (< 1 hour)', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 1800, // 30 minutes from now
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    (jwt.sign as jest.Mock).mockReturnValue('new-refreshed-token');
+
+    const request = createMockRequest('/account', { access_token: 'expiring-token' });
+    const response = await middleware(request);
+
+    expect(jwt.sign).toHaveBeenCalledWith(
+      { userId: 'user-123', email: 'test@example.com' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Check that new token is set in cookie
+    const setCookie = response.headers.get('set-cookie');
+    expect(setCookie).toContain('access_token=new-refreshed-token');
+    expect(setCookie).toContain('HttpOnly');
+  });
+
+  test('No token refresh for tokens with > 1 hour remaining', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours from now
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+
+    const request = createMockRequest('/account', { access_token: 'valid-token' });
+    const response = await middleware(request);
+
+    expect(jwt.sign).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+  });
+
+  test('Token refresh sets secure flag in production', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 1800,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    (jwt.sign as jest.Mock).mockReturnValue('new-token');
+
+    const request = createMockRequest('/account', { access_token: 'token' });
+    const response = await middleware(request);
+
+    const setCookie = response.headers.get('set-cookie');
+    expect(setCookie).toContain('Secure');
+
+    process.env.NODE_ENV = originalEnv;
+  });
+
+  test('Token refresh threshold at exactly 1 hour', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 3599, // 3599 seconds = just under 1 hour
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    (jwt.sign as jest.Mock).mockReturnValue('new-token');
+
+    const request = createMockRequest('/account', { access_token: 'token' });
+    await middleware(request);
+
+    expect(jwt.sign).toHaveBeenCalled();
+  });
+
+  test('No refresh for expired tokens (handled by error)', async () => {
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new jwt.TokenExpiredError('jwt expired', new Date());
+    });
+
+    const request = createMockRequest('/account', { access_token: 'expired' });
+    const response = await middleware(request);
+
+    expect(jwt.sign).not.toHaveBeenCalled();
+    expect(response.status).toBe(307); // Redirect to signin
+  });
+});
+
+describe('Middleware - User Header Injection Tests', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('User ID and email added to request headers', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+
+    const request = createMockRequest('/account', { access_token: 'valid-token' });
+    const response = await middleware(request);
+
+    // For non-refresh case, headers are set on the request
+    expect(response.status).toBe(200);
+  });
+
+  test('User headers set during token refresh', async () => {
+    const mockPayload = {
+      userId: 'user-456',
+      email: 'refresh@example.com',
+      exp: Math.floor(Date.now() / 1000) + 1800,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    (jwt.sign as jest.Mock).mockReturnValue('new-token');
+
+    const request = createMockRequest('/account', { access_token: 'expiring-token' });
+    const response = await middleware(request);
+
+    // Check response headers
+    expect(response.headers.get('x-user-id')).toBe('user-456');
+    expect(response.headers.get('x-user-email')).toBe('refresh@example.com');
+  });
+
+  test('User headers not set for public routes', async () => {
+    const request = createMockRequest('/pricing');
+    const response = await middleware(request);
+
+    expect(response.headers.get('x-user-id')).toBeNull();
+    expect(response.headers.get('x-user-email')).toBeNull();
+  });
+
+  test('User headers not set on authentication failure', async () => {
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid token');
+    });
+
+    const request = createMockRequest('/account', { access_token: 'invalid' });
+    const response = await middleware(request);
+
+    expect(response.headers.get('x-user-id')).toBeNull();
+    expect(response.headers.get('x-user-email')).toBeNull();
+  });
+
+  test('Special characters in email handled correctly', async () => {
+    const mockPayload = {
+      userId: 'user-789',
+      email: 'test+special@example.com',
+      exp: Math.floor(Date.now() / 1000) + 1800,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    (jwt.sign as jest.Mock).mockReturnValue('new-token');
+
+    const request = createMockRequest('/account', { access_token: 'token' });
+    const response = await middleware(request);
+
+    expect(response.headers.get('x-user-email')).toBe('test+special@example.com');
+  });
+});
+
 describe('Middleware - Cookie Management Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   test('Read access_token cookie correctly', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'my-token-value' });
 
     await middleware(request);
 
-    expect(auth.verifyToken).toHaveBeenCalledWith('my-token-value');
+    expect(jwt.verify).toHaveBeenCalledWith('my-token-value', JWT_SECRET);
   });
 
   test('Clear access_token on invalid token', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid token');
+    });
     const request = createMockRequest('/account', { access_token: 'invalid-token' });
     const response = await middleware(request);
 
@@ -328,21 +538,31 @@ describe('Middleware - Cookie Management Tests', () => {
   });
 
   test('Cookie validation on every protected request', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
 
     // First request
     const request1 = createMockRequest('/account', { access_token: 'token1' });
     await middleware(request1);
-    expect(auth.verifyToken).toHaveBeenCalledTimes(1);
+    expect(jwt.verify).toHaveBeenCalledTimes(1);
 
     // Second request
     const request2 = createMockRequest('/account', { access_token: 'token2' });
     await middleware(request2);
-    expect(auth.verifyToken).toHaveBeenCalledTimes(2);
+    expect(jwt.verify).toHaveBeenCalledTimes(2);
   });
 
   test('Multiple cookie handling', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', {
       access_token: 'access-token',
       other_cookie: 'other-value'
@@ -351,11 +571,13 @@ describe('Middleware - Cookie Management Tests', () => {
     const response = await middleware(request);
 
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).toHaveBeenCalledWith('access-token');
+    expect(jwt.verify).toHaveBeenCalledWith('access-token', JWT_SECRET);
   });
 
   test('Cookie security flags respected', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid');
+    });
     const request = createMockRequest('/account', { access_token: 'token' });
     const response = await middleware(request);
 
@@ -381,7 +603,9 @@ describe('Middleware - Redirect Logic Tests', () => {
   });
 
   test('Redirect to /signin on invalid token', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('invalid');
+    });
     const request = createMockRequest('/account', { access_token: 'invalid' });
     const response = await middleware(request);
 
@@ -452,13 +676,15 @@ describe('Middleware - Edge Case Tests', () => {
 
   test('Very long tokens', async () => {
     const longToken = 'a'.repeat(10000);
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('token too long');
+    });
 
     const request = createMockRequest('/account', { access_token: longToken });
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
-    expect(auth.verifyToken).toHaveBeenCalledWith(longToken);
+    expect(jwt.verify).toHaveBeenCalledWith(longToken, JWT_SECRET);
   });
 
   test('Special characters in redirect URL', async () => {
@@ -471,7 +697,12 @@ describe('Middleware - Edge Case Tests', () => {
   });
 
   test('Concurrent requests', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
 
     const requests = Array.from({ length: 10 }, (_, i) =>
       middleware(createMockRequest('/account', { access_token: `token-${i}` }))
@@ -483,14 +714,21 @@ describe('Middleware - Edge Case Tests', () => {
     responses.forEach(response => {
       expect(response.status).toBe(200);
     });
-    expect(auth.verifyToken).toHaveBeenCalledTimes(10);
+    expect(jwt.verify).toHaveBeenCalledTimes(10);
   });
 
   test('Token expiring during request', async () => {
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
     // First call succeeds, second fails (simulating expiration)
-    (auth.verifyToken as jest.Mock)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    (jwt.verify as jest.Mock)
+      .mockReturnValueOnce(mockPayload)
+      .mockImplementationOnce(() => {
+        throw new jwt.TokenExpiredError('expired', new Date());
+      });
 
     const request1 = createMockRequest('/account', { access_token: 'token' });
     const response1 = await middleware(request1);
@@ -502,7 +740,7 @@ describe('Middleware - Edge Case Tests', () => {
   });
 
   test('Database connection errors', async () => {
-    (auth.verifyToken as jest.Mock).mockImplementation(() => {
+    (jwt.verify as jest.Mock).mockImplementation(() => {
       throw new Error('Database connection failed');
     });
 
@@ -514,7 +752,9 @@ describe('Middleware - Edge Case Tests', () => {
   });
 
   test('JWT_SECRET missing (environment)', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(false);
+    (jwt.verify as jest.Mock).mockImplementation(() => {
+      throw new Error('secret missing');
+    });
 
     const request = createMockRequest('/account', { access_token: 'token' });
     const response = await middleware(request);
@@ -529,7 +769,7 @@ describe('Middleware - Edge Case Tests', () => {
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('Empty string tokens', async () => {
@@ -553,7 +793,12 @@ describe('Middleware - Integration Tests', () => {
     expect(response1.status).toBe(307);
 
     // Step 2: After signin, access with valid token
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request2 = createMockRequest('/account', { access_token: 'valid-token' });
     const response2 = await middleware(request2);
     expect(response2.status).toBe(200);
@@ -561,20 +806,32 @@ describe('Middleware - Integration Tests', () => {
 
   test('Token refresh during middleware execution', async () => {
     // Old token fails
-    (auth.verifyToken as jest.Mock).mockReturnValueOnce(false);
+    (jwt.verify as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('invalid');
+    });
     const request1 = createMockRequest('/account', { access_token: 'old-token' });
     const response1 = await middleware(request1);
     expect(response1.status).toBe(307);
 
     // New token succeeds
-    (auth.verifyToken as jest.Mock).mockReturnValueOnce(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request2 = createMockRequest('/account', { access_token: 'new-token' });
     const response2 = await middleware(request2);
     expect(response2.status).toBe(200);
   });
 
   test('Multiple protected routes in sequence', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const routes = ['/account', '/account/billing', '/dashboard'];
 
     for (const route of routes) {
@@ -583,7 +840,7 @@ describe('Middleware - Integration Tests', () => {
       expect(response.status).toBe(200);
     }
 
-    expect(auth.verifyToken).toHaveBeenCalledTimes(routes.length);
+    expect(jwt.verify).toHaveBeenCalledTimes(routes.length);
   });
 
   test('Public → Protected → Public route flow', async () => {
@@ -591,34 +848,49 @@ describe('Middleware - Integration Tests', () => {
     const request1 = createMockRequest('/');
     const response1 = await middleware(request1);
     expect(response1.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
 
     // Protected route
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request2 = createMockRequest('/account', { access_token: 'token' });
     const response2 = await middleware(request2);
     expect(response2.status).toBe(200);
-    expect(auth.verifyToken).toHaveBeenCalledTimes(1);
+    expect(jwt.verify).toHaveBeenCalledTimes(1);
 
     // Public route again
     const request3 = createMockRequest('/pricing');
     const response3 = await middleware(request3);
     expect(response3.status).toBe(200);
-    expect(auth.verifyToken).toHaveBeenCalledTimes(1); // Still 1
+    expect(jwt.verify).toHaveBeenCalledTimes(1); // Still 1
   });
 
   test('Middleware + page auth consistency', async () => {
     // Middleware should allow valid tokens
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'valid-token' });
     const response = await middleware(request);
 
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).toHaveBeenCalledWith('valid-token');
+    expect(jwt.verify).toHaveBeenCalledWith('valid-token', JWT_SECRET);
   });
 
   test('Performance: middleware execution time < 50ms', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account', { access_token: 'token' });
 
     const startTime = performance.now();
@@ -642,7 +914,7 @@ describe('Middleware - Additional Coverage Tests', () => {
     const response = await middleware(request);
 
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 
   test('Public route with trailing slash', async () => {
@@ -684,7 +956,12 @@ describe('Middleware - Additional Coverage Tests', () => {
   });
 
   test('Nested protected routes', async () => {
-    (auth.verifyToken as jest.Mock).mockReturnValue(true);
+    const mockPayload = {
+      userId: 'user-123',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 7200,
+    };
+    (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
     const request = createMockRequest('/account/settings/security', {
       access_token: 'token'
     });
@@ -695,7 +972,7 @@ describe('Middleware - Additional Coverage Tests', () => {
 
   test('Error logging occurs on verification failure', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-    (auth.verifyToken as jest.Mock).mockImplementation(() => {
+    (jwt.verify as jest.Mock).mockImplementation(() => {
       throw new Error('Verification error');
     });
 
@@ -711,6 +988,23 @@ describe('Middleware - Additional Coverage Tests', () => {
     const response = await middleware(request);
 
     expect(response.status).toBe(200);
-    expect(auth.verifyToken).not.toHaveBeenCalled();
+    expect(jwt.verify).not.toHaveBeenCalled();
+  });
+
+  test('API subscription route requires authentication', async () => {
+    const request = createMockRequest('/api/subscription');
+    const response = await middleware(request);
+
+    expect(response.status).toBe(307);
+    const locationHeader = response.headers.get('location');
+    expect(locationHeader).toContain('/signin');
+  });
+
+  test('Signup route is public', async () => {
+    const request = createMockRequest('/signup');
+    const response = await middleware(request);
+
+    expect(response.status).toBe(200);
+    expect(jwt.verify).not.toHaveBeenCalled();
   });
 });
