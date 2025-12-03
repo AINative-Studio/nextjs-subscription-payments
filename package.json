@@ -19,9 +19,11 @@
   "dependencies": {
     "@radix-ui/react-toast": "^1.1.5",
     "@stripe/stripe-js": "2.4.0",
+    "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.0",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
+    "jsonwebtoken": "^9.0.2",
     "lucide-react": "0.330.0",
     "next": "14.2.3",
     "pg": "^8.11.0",
@@ -34,8 +36,10 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/glob": "^9.0.0",
     "@types/jest": "^30.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.14.2",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.3",

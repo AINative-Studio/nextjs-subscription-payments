@@ -2,13 +2,15 @@
 const config = {
   testEnvironment: 'node',
   roots: ['<rootDir>'],
-  testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
+  testMatch: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.js', '**/?(*.)+(spec|test).ts', '**/?(*.)+(spec|test).js'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   collectCoverageFrom: [
     'lib/**/*.ts',
+    'scripts/**/*.js',
     '!lib/**/*.d.ts',
     '!lib/**/__tests__/**',
     '!lib/**/*.test.ts',
+    '!scripts/**/*.test.js',
   ],
   coverageThreshold: {
     global: {
@@ -38,6 +40,9 @@ const config = {
       },
     ],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(.*\\.mjs$))',
+  ],
 };
 
 module.exports = config;
