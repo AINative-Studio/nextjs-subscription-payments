@@ -6,11 +6,19 @@ const config = {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   collectCoverageFrom: [
     'lib/**/*.ts',
+    'app/**/*.{ts,tsx}',
+    'utils/**/*.ts',
     'scripts/**/*.js',
     '!lib/**/*.d.ts',
     '!lib/**/__tests__/**',
     '!lib/**/*.test.ts',
+    '!app/**/__tests__/**',
+    '!app/**/*.test.{ts,tsx}',
+    '!utils/**/__tests__/**',
+    '!utils/**/*.test.ts',
     '!scripts/**/*.test.js',
+    '!**/*.d.ts',
+    '!**/node_modules/**',
   ],
   coverageThreshold: {
     global: {
@@ -26,6 +34,7 @@ const config = {
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@/(.*)$': '<rootDir>/$1',
   },
   transform: {
     '^.+\\.tsx?$': [
