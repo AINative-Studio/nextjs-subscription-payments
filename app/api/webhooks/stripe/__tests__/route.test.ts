@@ -810,11 +810,12 @@ describe('Stripe Webhook Route', () => {
   // 5. Subscription Webhook Tests (12 tests)
   // ============================================================================
   describe('Subscription Webhook Tests', () => {
-    const baseSubscription: Stripe.Subscription = {
+    const baseSubscription: any = {
       id: 'sub_123',
       object: 'subscription',
       customer: 'cus_123',
       status: 'active',
+      default_payment_method: null,
       items: {
         object: 'list',
         data: [
@@ -1212,6 +1213,7 @@ describe('Stripe Webhook Route', () => {
         object: 'subscription' as const,
         customer: 'cus_123',
         status: 'active' as const,
+        default_payment_method: null,
         items: {
           object: 'list' as const,
           data: [
@@ -1254,7 +1256,7 @@ describe('Stripe Webhook Route', () => {
         .mockResolvedValueOnce({ rows: [{ user_id: 'user_123' }], rowCount: 1, command: '', oid: 0, fields: [] })
         .mockResolvedValueOnce({ rows: [subscription], rowCount: 1, command: '', oid: 0, fields: [] });
 
-      stripe.subscriptions.retrieve.mockResolvedValue(subscription);
+      stripe.subscriptions.retrieve.mockResolvedValue(subscription as any);
 
       const request = new Request('http://localhost:3000/api/webhooks/stripe', {
         method: 'POST',
