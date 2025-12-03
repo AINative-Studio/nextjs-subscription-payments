@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS users (
   full_name TEXT,
   avatar_url TEXT,
 
+  -- Stripe integration
+  stripe_customer_id TEXT UNIQUE,
+
   -- Billing information (stored as JSON)
   billing_address JSONB,
   payment_method JSONB,
@@ -88,6 +91,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Indexes for users table
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer_id ON users(stripe_customer_id);
 
 -- Trigger to auto-update updated_at on users
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;

@@ -21,6 +21,7 @@ export function formatPrice(
     style: 'currency',
     currency: currency.toUpperCase(),
     minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(amount / 100);
 }
 
@@ -111,6 +112,11 @@ export function calculateNextBillingDate(
 
   try {
     const date = new Date(currentPeriodEnd);
+    // Check if date is invalid
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date:', currentPeriodEnd);
+      return null;
+    }
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',

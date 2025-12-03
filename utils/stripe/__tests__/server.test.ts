@@ -8,15 +8,53 @@ import { getURL } from '@/utils/helpers';
 
 // Mock dependencies
 jest.mock('../config');
-jest.mock('@/utils/helpers');
+jest.mock('@/utils/helpers', () => {
+  const actual = jest.requireActual('@/utils/helpers');
+  return {
+    ...actual,
+    getURL: jest.fn(),
+  };
+});
+jest.mock('next/headers', () => ({
+  headers: jest.fn(() => ({
+    get: jest.fn((key: string) => {
+      if (key === 'x-user-id') return 'user-123';
+      if (key === 'x-user-email') return 'test@example.com';
+      return null;
+    }),
+  })),
+}));
+jest.mock('@/lib/zerodb', () => ({
+  query: jest.fn(),
+}));
 
 const mockStripe = stripe as jest.Mocked<typeof stripe>;
 const mockGetURL = getURL as jest.MockedFunction<typeof getURL>;
+const mockQuery = require('@/lib/zerodb').query as jest.MockedFunction<any>;
 
 describe('Stripe Server Utilities', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetURL.mockImplementation((path) => `http://localhost:3000${path}`);
+    mockGetURL.mockImplementation((path) => `http://localhost:3000${path || ''}`);
+
+    // Mock database query for customer lookup
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT stripe_customer_id')) {
+        return Promise.resolve({ rows: [{ stripe_customer_id: 'cus_123' }] });
+      }
+      if (sql.includes('UPDATE users SET stripe_customer_id')) {
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    // Mock Stripe customer create
+    if (mockStripe.customers && mockStripe.customers.create) {
+      (mockStripe.customers.create as jest.Mock).mockResolvedValue({
+        id: 'cus_123',
+        email: 'test@example.com',
+      });
+    }
   });
 
   describe('calculateTrialEndUnixTimestamp', () => {
@@ -124,10 +162,8 @@ describe('Stripe Server Utilities', () => {
 
       const result = await checkoutWithStripe(mockPrice, mockCurrentPath);
 
-      expect(result).toEqual({
-        errorRedirect: null,
-        sessionId: 'cs_test_123',
-      });
+      expect(result.sessionId).toBe('cs_test_123');
+      expect(result.errorRedirect).toBeUndefined();
 
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -196,7 +232,7 @@ describe('Stripe Server Utilities', () => {
       const result = await checkoutWithStripe(mockPrice, mockCurrentPath);
 
       expect(result.errorRedirect).toContain('error');
-      expect(result.sessionId).toBeNull();
+      expect(result.sessionId).toBeUndefined();
     });
 
     it('should handle network errors', async () => {
@@ -206,8 +242,8 @@ describe('Stripe Server Utilities', () => {
 
       const result = await checkoutWithStripe(mockPrice, mockCurrentPath);
 
-      expect(result.errorRedirect).not.toBeNull();
-      expect(result.sessionId).toBeNull();
+      expect(result.errorRedirect).toBeDefined();
+      expect(result.sessionId).toBeUndefined();
     });
 
     it('should set correct mode for recurring prices', async () => {
